@@ -1,0 +1,222 @@
+import dotenv from "dotenv";
+import { Telegraf } from "telegraf";
+
+dotenv.config();
+
+const token = process.env.BOT_TOKEN;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const geminiModel = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+
+if (!token) {
+  throw new Error("BOT_TOKEN is required");
+}
+
+const targetUserIds = new Set(
+  (process.env.TARGET_USER_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0),
+);
+
+const roastCooldownMs = parsePositiveInt(process.env.ROAST_COOLDOWN_MS, 20 * 60 * 1000);
+const replyChancePercent = clamp(parsePositiveInt(process.env.REPLY_CHANCE_PERCENT, 12), 1, 100);
+const targetUsernames = new Set(
+  (process.env.TARGET_USERNAMES ?? "")
+    .split(",")
+    .map((value) => value.trim().replace(/^@/, "").toLowerCase())
+    .filter(Boolean),
+);
+
+const globalLines = [
+  "Говорят, ты пишешь быстро. По смыслу это пока слухи.",
+  "Иногда молчание золото. В твоем случае чат пока в рассрочку.",
+  "Сильный ход. Жаль, что не в ту сторону.",
+  "Если уверенность превращать в результат, ты бы уже закрыл квартал.",
+  "Сообщение бодрое. Аргументы подойдут попозже, видимо.",
+  "В этом тексте энергия победителя и точность прогноза погоды месяц назад.",
+  "Сказано так уверенно, будто факты обязаны подстроиться.",
+  "Тут либо тонкий расчет, либо очень смелая импровизация.",
+];
+
+const targetLines = [
+  "Когда ты пишешь в чат, даже опечатки выходят с характером.",
+  "Уровень уверенности высокий. Уровень доказательств держится в секрете.",
+  "Ты не ошибаешься. Ты просто создаешь альтернативную версию событий.",
+  "В каждом твоем сообщении есть драйв. Логика обычно подъезжает следующим рейсом.",
+  "Ты так заходишь в тему, будто у темы не было выбора.",
+  "Твоя подача сильная. Реальность иногда просит рематч.",
+];
+
+const roastMeLines = [
+  "Ты вызвал бота сам. Это уже поступок со спорной стратегией.",
+  "Самопрослушивание мыслей прошло успешно. Самооценка пока на техработах.",
+  "Ты попросил подкол. Значит, внутренний критик сегодня в отпуске.",
+  "Хорошая новость: ты самоироничный. Плохая: бот это заметил.",
+];
+
+const helpText = [
+  "/start - краткая справка",
+  "/help - список команд",
+  "/roastme - получить шутку про себя",
+  "/joke - получить случайную шутку",
+  "",
+  "Для реакций в группе:",
+  "1. Добавь бота в группу",
+  "2. Выключи Privacy Mode через BotFather",
+  "3. При желании задай TARGET_USER_IDS через .env",
+].join("\n");
+
+const bot = new Telegraf(token);
+const lastReplyAtByChat = new Map<number, number>();
+const geminiSystemPrompt = [
+  "Ты пишешь на русском.",
+  "Сгенерируй одну короткую, смешную и добродушную шутку в сухом пафосном стиле.",
+  "Стиль: сдержанный, ироничный, псевдо-мудрый вайб боевиков без прямого копирования чьих-либо цитат.",
+  "Не используй оскорбления, угрозы, хейт, мат, сексуальный контент, темы внешности, здоровья, расы, религии или унижения.",
+  "Отвечай одной фразой длиной до 25 слов.",
+].join(" ");
+
+bot.start((ctx) => ctx.reply(helpText));
+bot.help((ctx) => ctx.reply(helpText));
+
+bot.command("joke", async (ctx) => {
+  await ctx.reply(randomItem(globalLines));
+});
+
+bot.command("roastme", async (ctx) => {
+  await ctx.reply(randomItem(roastMeLines));
+});
+
+bot.on("text", async (ctx) => {
+  if (!ctx.chat || (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup")) {
+    return;
+  }
+
+  const text = ctx.message.text.trim();
+  if (!text || text.startsWith("/")) {
+    return;
+  }
+
+  const chatId = ctx.chat.id;
+  const now = Date.now();
+  const lastReplyAt = lastReplyAtByChat.get(chatId) ?? 0;
+
+  if (now - lastReplyAt < roastCooldownMs) {
+    return;
+  }
+
+  const username = ctx.from.username?.toLowerCase() ?? "";
+  const isTargetUser = targetUserIds.has(ctx.from.id) || targetUsernames.has(username);
+  const shouldReply = isTargetUser || roll(replyChancePercent);
+
+  if (!shouldReply) {
+    return;
+  }
+
+  const line = isTargetUser
+    ? await generateTargetJoke({
+        messageText: text,
+        username: ctx.from.username,
+      })
+    : randomItem(globalLines);
+  lastReplyAtByChat.set(chatId, now);
+
+  await ctx.reply(line, {
+    reply_parameters: {
+      message_id: ctx.message.message_id,
+    },
+  });
+});
+
+bot.catch((error) => {
+  console.error("Bot error", error);
+});
+
+bot.launch().then(() => {
+  console.log("Telegram bot is running");
+});
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
+function randomItem<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function parsePositiveInt(input: string | undefined, fallback: number): number {
+  const value = Number(input);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function roll(chancePercent: number): boolean {
+  return Math.random() * 100 < chancePercent;
+}
+
+async function generateTargetJoke(input: {
+  messageText: string;
+  username?: string;
+}): Promise<string> {
+  if (!geminiApiKey) {
+    return randomItem(targetLines);
+  }
+
+  const prompt = [
+    `Автор сообщения: @${input.username ?? "unknown"}.`,
+    `Текст сообщения: "${input.messageText}".`,
+    "Сделай короткую добродушную подколку по содержанию сообщения, а не по личным качествам человека.",
+  ].join("\n");
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiApiKey,
+      },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{ text: geminiSystemPrompt }],
+        },
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 1,
+          maxOutputTokens: 80,
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    console.error("Gemini API error", response.status, await response.text());
+    return randomItem(targetLines);
+  }
+
+  const payload = (await response.json()) as GeminiGenerateContentResponse;
+  const text = payload.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? "")
+    .join(" ")
+    .trim();
+
+  return text || randomItem(targetLines);
+}
+
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+};
