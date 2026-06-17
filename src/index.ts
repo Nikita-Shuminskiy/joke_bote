@@ -29,32 +29,7 @@ const targetUsernames = new Set(
     .filter(Boolean),
 );
 
-const globalLines = [
-  "Говорят, ты пишешь быстро. По смыслу это пока слухи.",
-  "Иногда молчание золото. В твоем случае чат пока в рассрочку.",
-  "Сильный ход. Жаль, что не в ту сторону.",
-  "Если уверенность превращать в результат, ты бы уже закрыл квартал.",
-  "Сообщение бодрое. Аргументы подойдут попозже, видимо.",
-  "В этом тексте энергия победителя и точность прогноза погоды месяц назад.",
-  "Сказано так уверенно, будто факты обязаны подстроиться.",
-  "Тут либо тонкий расчет, либо очень смелая импровизация.",
-];
-
-const targetLines = [
-  "Когда ты пишешь в чат, даже опечатки выходят с характером.",
-  "Уровень уверенности высокий. Уровень доказательств держится в секрете.",
-  "Ты не ошибаешься. Ты просто создаешь альтернативную версию событий.",
-  "В каждом твоем сообщении есть драйв. Логика обычно подъезжает следующим рейсом.",
-  "Ты так заходишь в тему, будто у темы не было выбора.",
-  "Твоя подача сильная. Реальность иногда просит рематч.",
-];
-
-const roastMeLines = [
-  "Ты вызвал бота сам. Это уже поступок со спорной стратегией.",
-  "Самопрослушивание мыслей прошло успешно. Самооценка пока на техработах.",
-  "Ты попросил подкол. Значит, внутренний критик сегодня в отпуске.",
-  "Хорошая новость: ты самоироничный. Плохая: бот это заметил.",
-];
+const aiFallbackLine = "Сегодня даже нейросеть взяла паузу. Считай, это редкий комплимент.";
 
 const helpText = [
   "/start - краткая справка",
@@ -93,11 +68,20 @@ bot.start((ctx) => ctx.reply(helpText));
 bot.help((ctx) => ctx.reply(helpText));
 
 bot.command("joke", async (ctx) => {
-  await ctx.reply(randomItem(globalLines));
+  await ctx.reply(
+    await generateAiJoke({
+      mode: "general",
+    }),
+  );
 });
 
 bot.command("roastme", async (ctx) => {
-  await ctx.reply(randomItem(roastMeLines));
+  await ctx.reply(
+    await generateAiJoke({
+      mode: "self",
+      username: ctx.from.username,
+    }),
+  );
 });
 
 bot.on("text", async (ctx) => {
@@ -137,11 +121,16 @@ bot.on("text", async (ctx) => {
   }
 
   const line = isTargetUser
-    ? await generateTargetJoke({
+    ? await generateAiJoke({
+        mode: "target",
         messageText: text,
         username: ctx.from.username,
       })
-    : randomItem(globalLines);
+    : await generateAiJoke({
+        mode: "group",
+        messageText: text,
+        username: ctx.from.username,
+      });
   lastReplyAtByChat.set(chatId, now);
 
   await ctx.reply(line, {
@@ -164,10 +153,6 @@ bot.launch().then(() => {
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
-function randomItem<T>(items: T[]): T {
-  return items[Math.floor(Math.random() * items.length)];
-}
-
 function parsePositiveInt(input: string | undefined, fallback: number): number {
   const value = Number(input);
   return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -181,19 +166,17 @@ function roll(chancePercent: number): boolean {
   return Math.random() * 100 < chancePercent;
 }
 
-async function generateTargetJoke(input: {
-  messageText: string;
+async function generateAiJoke(input: {
+  mode: "general" | "self" | "group" | "target";
+  messageText?: string;
   username?: string;
 }): Promise<string> {
   if (!geminiApiKey) {
-    return randomItem(targetLines);
+    console.error("Gemini API key is missing");
+    return aiFallbackLine;
   }
 
-  const prompt = [
-    `Автор сообщения: @${input.username ?? "unknown"}.`,
-    `Текст сообщения: "${input.messageText}".`,
-    "Сделай короткую добродушную подколку по содержанию сообщения, а не по личным качествам человека.",
-  ].join("\n");
+  const prompt = buildPrompt(input);
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
@@ -222,7 +205,7 @@ async function generateTargetJoke(input: {
 
   if (!response.ok) {
     console.error("Gemini API error", response.status, await response.text());
-    return randomItem(targetLines);
+    return aiFallbackLine;
   }
 
   const payload = (await response.json()) as GeminiGenerateContentResponse;
@@ -231,7 +214,43 @@ async function generateTargetJoke(input: {
     .join(" ")
     .trim();
 
-  return text || randomItem(targetLines);
+  return text || aiFallbackLine;
+}
+
+function buildPrompt(input: {
+  mode: "general" | "self" | "group" | "target";
+  messageText?: string;
+  username?: string;
+}): string {
+  if (input.mode === "general") {
+    return [
+      "Сделай одну короткую случайную шутку для общего чата.",
+      "Шутка должна быть универсальной, без привязки к конкретному человеку.",
+    ].join("\n");
+  }
+
+  if (input.mode === "self") {
+    return [
+      `Пользователь: @${input.username ?? "unknown"}.`,
+      "Пользователь сам попросил подколку командой roastme.",
+      "Сделай короткую добродушную самоироничную шутку про автора.",
+    ].join("\n");
+  }
+
+  if (input.mode === "target") {
+    return [
+      `Автор сообщения: @${input.username ?? "unknown"}.`,
+      `Текст сообщения: "${input.messageText ?? ""}".`,
+      "Сделай короткую добродушную подколку по содержанию сообщения, а не по личным качествам человека.",
+    ].join("\n");
+  }
+
+  return [
+    `Автор сообщения: @${input.username ?? "unknown"}.`,
+    `Текст сообщения: "${input.messageText ?? ""}".`,
+    "Сделай короткую смешную реакцию на сообщение для общего чата.",
+    "Реагируй на формулировку или смысл сообщения, без унижения автора.",
+  ].join("\n");
 }
 
 type GeminiGenerateContentResponse = {
