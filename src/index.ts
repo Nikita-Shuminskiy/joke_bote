@@ -50,6 +50,7 @@ const geminiSystemPrompt = [
   "Шути только по теме диалога, без выбора конкретной жертвы.",
   "Не используй оскорбления, угрозы, хейт, мат, сексуальный контент, темы внешности, здоровья, расы, религии или унижения.",
   "Отвечай одной фразой длиной до 25 слов.",
+  "Верни только готовую реплику без markdown, списков, заголовков, кавычек, пояснений и префиксов вроде Context или Ответ.",
 ].join(" ");
 
 console.log("Bot config loaded", {
@@ -84,9 +85,12 @@ bot.command("id", async (ctx) => {
 });
 
 bot.command("joke", async (ctx) => {
+  const chatId = ctx.chat.id;
+
   await ctx.reply(
     await generateAiJoke({
-      mode: "general",
+      mode: ctx.chat.type === "group" || ctx.chat.type === "supergroup" ? "group" : "general",
+      chatContext: recentMessagesByChat.get(chatId) ?? [],
     }),
   );
 });
@@ -242,7 +246,7 @@ async function generateAiJoke(input: {
     .join(" ")
     .trim();
 
-  return text || aiFallbackLine;
+  return sanitizeAiReply(text) || aiFallbackLine;
 }
 
 function buildPrompt(input: {
@@ -255,6 +259,7 @@ function buildPrompt(input: {
     return [
       "Сделай одну короткую случайную шутку для общего чата.",
       "Шутка должна быть универсальной, без привязки к конкретному человеку.",
+      "Верни только текст шутки.",
     ].join("\n");
   }
 
@@ -263,6 +268,7 @@ function buildPrompt(input: {
       `Пользователь: @${input.username ?? "unknown"}.`,
       "Пользователь сам попросил подколку командой roastme.",
       "Сделай короткую добродушную самоироничную шутку про автора.",
+      "Верни только текст шутки.",
     ].join("\n");
   }
 
@@ -274,7 +280,29 @@ function buildPrompt(input: {
     "Сделай короткую смешную реакцию на текущий разговор для общего чата.",
     "Можно опираться на контекст последних сообщений, но не выбирай конкретного человека как цель шутки.",
     "Реагируй на формулировку, тему или общий вайб диалога, без унижения автора.",
+    "Верни только текст шутки.",
   ].join("\n");
+}
+
+function sanitizeAiReply(input: string | undefined): string {
+  if (!input) {
+    return "";
+  }
+
+  const cleanedLines = input
+    .replace(/\*\*/g, "")
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s*[-*]\s+/, "")
+        .replace(/^\s*(context|контекст|answer|ответ)\s*:?\s*/i, "")
+        .replace(/^["'«»]+|["'«»]+$/g, "")
+        .trim(),
+    )
+    .filter(Boolean)
+    .filter((line) => !/^(last chat|последние сообщения|chat context)\b/i.test(line));
+
+  return (cleanedLines[0] ?? "").slice(0, 280);
 }
 
 function rememberMessage(chatId: number, message: { username: string; text: string }): void {
