@@ -35,7 +35,7 @@ npm run dev
 - `ROAST_COOLDOWN_MS` - минимальная пауза между ответами в одном чате
 - `REPLY_CHANCE_PERCENT` - шанс случайной реакции на обычное сообщение
 - `GEMINI_API_KEY` - ключ Gemini API
-- `GEMINI_MODEL` - модель Gemini, по умолчанию `gemini-3.5-flash`
+- `GEMINI_MODEL` - модель Gemini, по умолчанию `gemini-3.1-flash-lite`
 
 ## Как узнать user id
 

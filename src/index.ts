@@ -5,7 +5,7 @@ dotenv.config();
 
 const token = process.env.BOT_TOKEN;
 const geminiApiKey = process.env.GEMINI_API_KEY;
-const geminiModel = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+const geminiModel = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
 
 if (!token) {
   throw new Error("BOT_TOKEN is required");
@@ -209,6 +209,28 @@ async function generateAiJoke(input: {
   }
 
   const prompt = buildPrompt(input);
+  const requestBody = {
+    system_instruction: {
+      parts: [{ text: geminiSystemPrompt }],
+    },
+    contents: [
+      {
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      temperature: 1,
+      maxOutputTokens: 80,
+    },
+  };
+
+  console.log("Gemini request", {
+    model: geminiModel,
+    mode: input.mode,
+    systemInstruction: geminiSystemPrompt,
+    prompt,
+    requestBody,
+  });
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
@@ -218,20 +240,7 @@ async function generateAiJoke(input: {
         "Content-Type": "application/json",
         "x-goog-api-key": geminiApiKey,
       },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: geminiSystemPrompt }],
-        },
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 1,
-          maxOutputTokens: 80,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     },
   );
 
@@ -245,8 +254,19 @@ async function generateAiJoke(input: {
     ?.map((part) => part.text ?? "")
     .join(" ")
     .trim();
+  const sanitizedText = sanitizeAiReply(text);
 
-  return sanitizeAiReply(text) || aiFallbackLine;
+  console.log("Gemini response", {
+    model: geminiModel,
+    mode: input.mode,
+    status: response.status,
+    rawText: text ?? null,
+    sanitizedText: sanitizedText || null,
+    finishReason: payload.candidates?.[0]?.finishReason ?? null,
+    usageMetadata: payload.usageMetadata ?? null,
+  });
+
+  return sanitizedText || aiFallbackLine;
 }
 
 function buildPrompt(input: {
@@ -372,10 +392,12 @@ function getUserLogInfo(user: {
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
+    finishReason?: string;
     content?: {
       parts?: Array<{
         text?: string;
       }>;
     };
   }>;
+  usageMetadata?: Record<string, unknown>;
 };
