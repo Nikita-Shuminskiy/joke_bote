@@ -20,8 +20,8 @@ const targetUserIds = new Set(
     .filter((value) => Number.isInteger(value) && value > 0),
 );
 
-const roastCooldownMs = parsePositiveInt(process.env.ROAST_COOLDOWN_MS, 20 * 60 * 1000);
-const replyChancePercent = clamp(parsePositiveInt(process.env.REPLY_CHANCE_PERCENT, 12), 1, 100);
+const roastCooldownMs = parsePositiveInt(process.env.ROAST_COOLDOWN_MS, 3 * 60 * 1000);
+const replyChancePercent = clamp(parsePositiveInt(process.env.REPLY_CHANCE_PERCENT, 35), 1, 100);
 const maxContextMessages = 12;
 
 const aiFallbackLine = "Сегодня даже нейросеть взяла паузу. Считай, это редкий комплимент.";

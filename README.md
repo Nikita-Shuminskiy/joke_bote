@@ -32,8 +32,8 @@ npm run dev
 - `BOT_USERNAME` - имя бота без `@`, опционально для будущих доработок
 - `TARGET_USER_IDS` - список numeric user id через запятую
 - `TARGET_USERNAMES` - список Telegram username через запятую, например `Yharitonovich`
-- `ROAST_COOLDOWN_MS` - минимальная пауза между ответами в одном чате
-- `REPLY_CHANCE_PERCENT` - шанс случайной реакции на обычное сообщение
+- `ROAST_COOLDOWN_MS` - минимальная пауза между ответами в одном чате, например `180000`
+- `REPLY_CHANCE_PERCENT` - шанс случайной реакции на обычное сообщение, например `35`
 - `GEMINI_API_KEY` - ключ Gemini API
 - `GEMINI_MODEL` - модель Gemini, по умолчанию `gemini-3.1-flash-lite`
 
