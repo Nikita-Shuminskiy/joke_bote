@@ -78,6 +78,17 @@ const geminiSystemPrompt = [
   "Отвечай одной фразой длиной до 25 слов.",
 ].join(" ");
 
+console.log("Bot config loaded", {
+  botUsername: process.env.BOT_USERNAME || null,
+  hasBotToken: Boolean(token),
+  hasGeminiApiKey: Boolean(geminiApiKey),
+  geminiModel,
+  targetUserIdsCount: targetUserIds.size,
+  targetUsernames: [...targetUsernames],
+  roastCooldownMs,
+  replyChancePercent,
+});
+
 bot.start((ctx) => ctx.reply(helpText));
 bot.help((ctx) => ctx.reply(helpText));
 
@@ -115,6 +126,16 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  if (isTargetUser) {
+    console.log("Target user message matched", {
+      chatId,
+      fromId: ctx.from.id,
+      username: ctx.from.username ?? null,
+      messageId: ctx.message.message_id,
+      textPreview: text.slice(0, 120),
+    });
+  }
+
   const line = isTargetUser
     ? await generateTargetJoke({
         messageText: text,
@@ -135,7 +156,9 @@ bot.catch((error) => {
 });
 
 bot.launch().then(() => {
-  console.log("Telegram bot is running");
+  console.log("Telegram bot is running", {
+    botUsername: process.env.BOT_USERNAME || null,
+  });
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
