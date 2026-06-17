@@ -22,12 +22,7 @@ const targetUserIds = new Set(
 
 const roastCooldownMs = parsePositiveInt(process.env.ROAST_COOLDOWN_MS, 20 * 60 * 1000);
 const replyChancePercent = clamp(parsePositiveInt(process.env.REPLY_CHANCE_PERCENT, 12), 1, 100);
-const targetUsernames = new Set(
-  (process.env.TARGET_USERNAMES ?? "")
-    .split(",")
-    .map((value) => value.trim().replace(/^@/, "").toLowerCase())
-    .filter(Boolean),
-);
+const maxContextMessages = 12;
 
 const aiFallbackLine = "Сегодня даже нейросеть взяла паузу. Считай, это редкий комплимент.";
 
@@ -45,22 +40,15 @@ const helpText = [
 
 const bot = new Telegraf(token);
 const lastReplyAtByChat = new Map<number, number>();
+const recentMessagesByChat = new Map<number, Array<{ username: string; text: string }>>();
 const geminiSystemPrompt = [
   "Ты пишешь на русском.",
   "Сгенерируй одну короткую, смешную и добродушную шутку в сухом пафосном стиле.",
   "Стиль: сдержанный, ироничный, псевдо-мудрый вайб боевиков без прямого копирования чьих-либо цитат.",
+  "У тебя есть контекст последних сообщений чата, используй его как фон разговора.",
+  "Шути только по теме диалога, без выбора конкретной жертвы.",
   "Не используй оскорбления, угрозы, хейт, мат, сексуальный контент, темы внешности, здоровья, расы, религии или унижения.",
   "Отвечай одной фразой длиной до 25 слов.",
-].join(" ");
-const yuraSystemPrompt = [
-  "Ты пишешь на русском.",
-  "Ты саркастичный комментатор в чате друзей.",
-  "Твоя главная цель — отвечать на сообщения Юры короткими подколами, афоризмами, псевдомудрыми цитатами и шутками.",
-  "Контекст о Юре: 26 лет, руководитель отдела продаж, за год вырос с нуля до руководителя, любит рассказывать истории и много говорить, часто уверен в себе больше, чем требует ситуация, любит машины и мотоциклы, любит шутить, но шутки часто получаются топорными, любимчик компании и душа коллектива, часто рассуждает как бизнес-гуру, иногда просит деньги на подвигаться или закрыть моментик, друзья в шутку считают его великим предпринимателем мирового уровня.",
-  "Стиль ответов: максимум 1-2 предложения, не объясняй шутку, не спорь долго, иногда используй стиль Джейсона Стэтхэма, иногда стиль мотивационного бизнес-тренера, иногда стиль философа из гаража, чем серьёзнее Юра говорит — тем абсурднее ответ.",
-  "Основные темы для подколов: Юра и деньги, Юра и бизнес, Юра и продажи, Юра и транспорт.",
-  "Всегда возвращай только готовую реплику.",
-  "Не используй угрозы, хейт, мат, сексуальный контент, темы внешности, здоровья, расы, религии или унижения.",
 ].join(" ");
 
 console.log("Bot config loaded", {
@@ -69,9 +57,9 @@ console.log("Bot config loaded", {
   hasGeminiApiKey: Boolean(geminiApiKey),
   geminiModel,
   targetUserIdsCount: targetUserIds.size,
-  targetUsernames: [...targetUsernames],
   roastCooldownMs,
   replyChancePercent,
+  maxContextMessages,
 });
 
 bot.start((ctx) => ctx.reply(helpText));
@@ -105,6 +93,11 @@ bot.on("text", async (ctx) => {
   }
 
   const chatId = ctx.chat.id;
+  rememberMessage(chatId, {
+    username: ctx.from.username ?? ctx.from.first_name ?? "unknown",
+    text,
+  });
+
   const now = Date.now();
   const lastReplyAt = lastReplyAtByChat.get(chatId) ?? 0;
 
@@ -112,35 +105,26 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  const username = ctx.from.username?.toLowerCase() ?? "";
-  const isTargetUser = targetUserIds.has(ctx.from.id) || targetUsernames.has(username);
-  const shouldReply = isTargetUser || roll(replyChancePercent);
+  const shouldReply = roll(replyChancePercent);
 
   if (!shouldReply) {
     return;
   }
 
-  if (isTargetUser) {
-    console.log("Target user message matched", {
-      chatId,
-      fromId: ctx.from.id,
-      username: ctx.from.username ?? null,
-      messageId: ctx.message.message_id,
-      textPreview: text.slice(0, 120),
-    });
-  }
+  console.log("Context-aware group joke triggered", {
+    chatId,
+    fromId: ctx.from.id,
+    username: ctx.from.username ?? null,
+    messageId: ctx.message.message_id,
+    textPreview: text.slice(0, 120),
+  });
 
-  const line = isTargetUser
-    ? await generateAiJoke({
-        mode: "target",
-        messageText: text,
-        username: ctx.from.username,
-      })
-    : await generateAiJoke({
-        mode: "group",
-        messageText: text,
-        username: ctx.from.username,
-      });
+  const line = await generateAiJoke({
+    mode: "group",
+    messageText: text,
+    username: ctx.from.username,
+    chatContext: recentMessagesByChat.get(chatId) ?? [],
+  });
   lastReplyAtByChat.set(chatId, now);
 
   await ctx.reply(line, {
@@ -177,9 +161,10 @@ function roll(chancePercent: number): boolean {
 }
 
 async function generateAiJoke(input: {
-  mode: "general" | "self" | "group" | "target";
+  mode: "general" | "self" | "group";
   messageText?: string;
   username?: string;
+  chatContext?: Array<{ username: string; text: string }>;
 }): Promise<string> {
   if (!geminiApiKey) {
     console.error("Gemini API key is missing");
@@ -198,7 +183,7 @@ async function generateAiJoke(input: {
       },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{ text: input.mode === "target" ? yuraSystemPrompt : geminiSystemPrompt }],
+          parts: [{ text: geminiSystemPrompt }],
         },
         contents: [
           {
@@ -228,9 +213,10 @@ async function generateAiJoke(input: {
 }
 
 function buildPrompt(input: {
-  mode: "general" | "self" | "group" | "target";
+  mode: "general" | "self" | "group";
   messageText?: string;
   username?: string;
+  chatContext?: Array<{ username: string; text: string }>;
 }): string {
   if (input.mode === "general") {
     return [
@@ -247,20 +233,39 @@ function buildPrompt(input: {
     ].join("\n");
   }
 
-  if (input.mode === "target") {
-    return [
-      `Автор сообщения: @${input.username ?? "unknown"}.`,
-      `Текст сообщения: "${input.messageText ?? ""}".`,
-      "Сделай короткую добродушную подколку по содержанию сообщения, а не по личным качествам человека.",
-    ].join("\n");
-  }
-
   return [
+    "Последние сообщения чата:",
+    renderChatContext(input.chatContext ?? []),
     `Автор сообщения: @${input.username ?? "unknown"}.`,
     `Текст сообщения: "${input.messageText ?? ""}".`,
-    "Сделай короткую смешную реакцию на сообщение для общего чата.",
-    "Реагируй на формулировку или смысл сообщения, без унижения автора.",
+    "Сделай короткую смешную реакцию на текущий разговор для общего чата.",
+    "Можно опираться на контекст последних сообщений, но не выбирай конкретного человека как цель шутки.",
+    "Реагируй на формулировку, тему или общий вайб диалога, без унижения автора.",
   ].join("\n");
+}
+
+function rememberMessage(chatId: number, message: { username: string; text: string }): void {
+  const messages = recentMessagesByChat.get(chatId) ?? [];
+  messages.push({
+    username: message.username,
+    text: message.text.slice(0, 280),
+  });
+
+  if (messages.length > maxContextMessages) {
+    messages.splice(0, messages.length - maxContextMessages);
+  }
+
+  recentMessagesByChat.set(chatId, messages);
+}
+
+function renderChatContext(messages: Array<{ username: string; text: string }>): string {
+  if (messages.length === 0) {
+    return "Контекст пока пустой.";
+  }
+
+  return messages
+    .map((message) => `@${message.username}: ${message.text}`)
+    .join("\n");
 }
 
 type GeminiGenerateContentResponse = {
