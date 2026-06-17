@@ -29,6 +29,7 @@ const aiFallbackLine = "Сегодня даже нейросеть взяла п
 const helpText = [
   "/start - краткая справка",
   "/help - список команд",
+  "/id - показать user_id и chat_id",
   "/roastme - получить шутку про себя",
   "/joke - получить случайную шутку",
   "",
@@ -65,6 +66,23 @@ console.log("Bot config loaded", {
 bot.start((ctx) => ctx.reply(helpText));
 bot.help((ctx) => ctx.reply(helpText));
 
+bot.command("id", async (ctx) => {
+  console.log("ID command requested", {
+    chat: getChatLogInfo(ctx.chat),
+    from: getUserLogInfo(ctx.from),
+    messageId: ctx.message.message_id,
+  });
+
+  await ctx.reply(
+    [
+      `user_id: ${ctx.from.id}`,
+      `username: ${ctx.from.username ? `@${ctx.from.username}` : "none"}`,
+      `chat_id: ${ctx.chat.id}`,
+      `chat_type: ${ctx.chat.type}`,
+    ].join("\n"),
+  );
+});
+
 bot.command("joke", async (ctx) => {
   await ctx.reply(
     await generateAiJoke({
@@ -93,6 +111,13 @@ bot.on("text", async (ctx) => {
   }
 
   const chatId = ctx.chat.id;
+  console.log("Incoming group message", {
+    chat: getChatLogInfo(ctx.chat),
+    from: getUserLogInfo(ctx.from),
+    messageId: ctx.message.message_id,
+    textPreview: text.slice(0, 120),
+  });
+
   rememberMessage(chatId, {
     username: ctx.from.username ?? ctx.from.first_name ?? "unknown",
     text,
@@ -131,6 +156,14 @@ bot.on("text", async (ctx) => {
     reply_parameters: {
       message_id: ctx.message.message_id,
     },
+  });
+});
+
+bot.on("new_chat_members", (ctx) => {
+  console.log("New chat members", {
+    chat: getChatLogInfo(ctx.chat),
+    addedBy: getUserLogInfo(ctx.from),
+    members: ctx.message.new_chat_members.map(getUserLogInfo),
   });
 });
 
@@ -266,6 +299,47 @@ function renderChatContext(messages: Array<{ username: string; text: string }>):
   return messages
     .map((message) => `@${message.username}: ${message.text}`)
     .join("\n");
+}
+
+function getChatLogInfo(chat: {
+  id: number;
+  type: string;
+  title?: string;
+  username?: string;
+}): {
+  id: number;
+  type: string;
+  title: string | null;
+  username: string | null;
+} {
+  return {
+    id: chat.id,
+    type: chat.type,
+    title: chat.title ?? null,
+    username: chat.username ?? null,
+  };
+}
+
+function getUserLogInfo(user: {
+  id: number;
+  is_bot: boolean;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+}): {
+  id: number;
+  isBot: boolean;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+} {
+  return {
+    id: user.id,
+    isBot: user.is_bot,
+    firstName: user.first_name,
+    lastName: user.last_name ?? null,
+    username: user.username ?? null,
+  };
 }
 
 type GeminiGenerateContentResponse = {
