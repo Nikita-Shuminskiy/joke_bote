@@ -32,7 +32,7 @@ const helpText = [
   "/id - показать user_id и chat_id",
   "/roastme - получить шутку про себя",
   "/joke - получить случайную шутку",
-  "/dagestan - интересный факт про Дагестан",
+  "/dag - интересный факт про Дагестан",
   "",
   "Для реакций в группе:",
   "1. Добавь бота в группу",
@@ -112,7 +112,7 @@ bot.command("roastme", async (ctx) => {
   );
 });
 
-bot.command("dagestan", async (ctx) => {
+bot.command("dag", async (ctx) => {
   await ctx.reply(
     await generateAiJoke({
       mode: "dagestan",
